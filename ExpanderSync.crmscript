@@ -1,0 +1,51 @@
+%EJSCRIPT_START%
+<%
+#setLanguageLevel 3;
+
+String legalTables = ",ejscript,screen_definition,screen_definition_element,screen_definition_action,screen_definition_hidden,screen_definition_language,item_config,extra_tables,extra_fields,";
+
+String verb = getHttpHeader("REQUEST_METHOD");
+String table = getCgiVariable("table");
+String fields = getCgiVariable("fields");
+String json = getCgiVariable("json");
+
+if (legalTables.find("," + table + ",") < 0)
+  throw "Unsupported table";
+
+
+JSONBuilder jb;
+jb.pushObject("");
+
+SearchEngine se;
+
+if (verb == "GET") {
+  se.addFields(table, fields);
+  for (Integer index = 0; getCgiVariable("whereField." + index.toString()) != ""; index++)
+    se.addCriteria(table + "." + getCgiVariable("whereField." + index.toString()), getCgiVariable("whereOperator." + index.toString()), getCgiVariable("whereValue." + index.toString()));
+  if (getCgiVariable("order") != "")
+    se.addOrder(getCgiVariable("order"), true);
+  se.executeToJSONBuilder(jb, json, table);
+}
+else if (verb == "POST") {
+  XMLNode data = parseJSON2(getCgiContent());
+  
+  XMLNode[] children = data.getChildren();
+  for (Integer i = 0; i < children.length(); i++) {
+    String field = children[i].getName();
+    String value = children[i].getText();
+    
+    if (field == "updated") // Adjust to UTC
+      value = DateTime(value).addSec(-1 * getLocalTimeZone().getTimeZoneSecs()).toString();
+    
+    if (field != "id")
+    	se.addData(table + "." + field, value);    
+  } 
+  se.addCriteria(table + ".id", "equals", data.getValueFromPath("id"));
+  se.update();
+}
+
+jb.finalize();
+print(jb.getString());
+
+%>
+%EJSCRIPT_END%

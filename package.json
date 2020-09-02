@@ -1,0 +1,23 @@
+{
+  "name": "expandersync",
+  "version": "1.0.0",
+  "description": "Tool for syncing SuperOffice Customizations between local drive and installation",
+  "main": "ExpanderSync.js",
+  "dependencies": {
+    "axios": "^0.19.2"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kodesentralen/ExpanderSync.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Kodesentralen/ExpanderSync/issues"
+  },
+  "homepage": "https://github.com/Kodesentralen/ExpanderSync#readme"
+}
