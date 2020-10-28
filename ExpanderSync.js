@@ -10,6 +10,7 @@ let debug = false;
 let verboseLevel = 1;
 const filenamesMap = {}; // Map of filenames so that children can lookup parents
 const navigationFileIndent = {}; // Map of navigationFiles to get indenting
+const knownFiles = {}; // Map of created files. Used to know what files we have created. 
 
 // Information about how tables and fields should be stored in the filesystem
 const dbToDisk = {
@@ -174,7 +175,7 @@ function createFolderAndFile(filename, data, mtime, appendToJson) {
     fs.mkdirSync(targetFolder, { recursive: true });
     if (appendToJson) {
       let json = {};
-      if (fs.existsSync(filename)) json = JSON.parse(fs.readFileSync(filename)); // Read existing json if it exists. Otherwise, new file, defaults to {}
+      if (filename in knownFiles && fs.existsSync(filename)) json = JSON.parse(fs.readFileSync(filename)); // Read existing json if it exists. Otherwise, new file, defaults to {}
 
       json[appendToJson] = json[appendToJson] || [];
       json[appendToJson].push(JSON.parse(data));
@@ -182,6 +183,7 @@ function createFolderAndFile(filename, data, mtime, appendToJson) {
     }
     fs.writeFileSync(filename, data);
     if (mtime) fs.utimesSync(filename, mtime, mtime);
+    knownFiles[filename] = true;
   }
 }
 
