@@ -10,9 +10,14 @@ let readOnly = false;
 let debug = false;
 let verboseLevel = 1;
 let cleanFolders = false;
+let noPut = false;
 const filenamesMap = {}; // Map of filenames so that children can lookup parents
 let memoryFile = {}; // Map of files that are built in memory since they have multiple writes. Payload is { data: obj/string, mtime, indent }
 const knownFiles = {}; // Map of created files. Used to know what files we have created. 
+
+// Summary of sync
+const syncSentFiles = [];
+const syncReceivedFiles = [];
 
 // Information about how tables and fields should be stored in the filesystem
 const dbToDisk = {
@@ -53,7 +58,7 @@ const dbToDisk = {
         folderField: "screen_definition.hierarchy_id.fullname",
         filename: "screen_definition/${folder}/${screen_definition}/screen_definition_element/${id}-${name}",
         order: "screen_definition_element.order_pos",
-        where: [{ field: "screen_definition.id", operator: "gt", vaue: "0"}],
+        where: [{ field: "screen_definition.id", operator: "gt", vaue: "0" }],
         children: {
           item_config: {
             fields: "id,domain,item_id,item_name,item_value",
@@ -171,11 +176,12 @@ async function putElement(elementInfo, element, mtime) {
   // Build object to save
   const obj = {};
   for (const updateField of elementInfo.updateFields) obj[updateField] = element[updateField];
-  for (const scriptFile of elementInfo.scriptFiles) obj[scriptFile] = fs.readFileSync(element.filename + "." + scriptFile + ".crmscript", "utf8");
+  for (const scriptFile of elementInfo.scriptFiles) obj[scriptFile] = fs.readFileSync(targetPath + element.filename + "." + scriptFile + ".crmscript", "utf8");
 
   if (elementInfo.hasRegisteredUpdated) obj.updated = buildDateTimeString(mtime);
-
-  const response = await axios.post(endpoint + "&table=" + elementInfo.table, obj);
+  if (noPut === false) {
+    const response = await axios.post(endpoint + "&table=" + elementInfo.table, obj);
+  }
 }
 
 function createFolderAndFile(filename, data, mtime) {
@@ -189,8 +195,8 @@ function createFolderAndFile(filename, data, mtime) {
       existingData = fs.readFileSync(filename, 'utf8').replace(/\r/g, "");
     if (existingData !== data.replace(/\r/g, "")) {
       fs.writeFileSync(filename, data);
-      if (mtime) fs.utimesSync(filename, mtime, mtime);
     }
+    if (mtime) fs.utimesSync(filename, mtime, mtime);
     knownFiles[filename] = true;
   }
 }
@@ -221,7 +227,7 @@ function appendToNavigationFile(filename, element) {
       " <a href='./screen_definition_element/" +
       path.basename(element.filename) +
       ".json'></a><br>\r\n";
-      memoryFile[filename].data += line;
+    memoryFile[filename].data += line;
     if (element.element_type >= 201 && element.element_type < 300) indent++;
   }
   memoryFile[filename].indent = indent;
@@ -252,9 +258,9 @@ async function getElement(elementInfo, element) {
     const data = getAttributesExceptScriptfiles(elementInfo, element);
     if (elementInfo.appendToJson) {
       if (!(jsonFilename in memoryFile))
-        memoryFile[jsonFilename] = { data: {} };        
-      
-      json = memoryFile[jsonFilename].data; 
+        memoryFile[jsonFilename] = { data: {} };
+
+      json = memoryFile[jsonFilename].data;
       json[elementInfo.appendToJson] = json[elementInfo.appendToJson] || [];
       json[elementInfo.appendToJson].push(data);
     }
@@ -263,8 +269,11 @@ async function getElement(elementInfo, element) {
     }
 
     // Create navigation file for screen_definition
-    if (elementInfo.table === "screen_definition_element")
-      appendToNavigationFile(path.dirname(targetPath + element.filename) + "/../_elements.html", element);
+    if (elementInfo.table === "screen_definition_element") {
+      let folder = path.dirname(targetPath + element.filename).split("/");
+      folder = folder.splice(0, folder.length - 1);
+      appendToNavigationFile(folder.join("/") + "/_elements.html", element);
+    }
   }
 
   // Build script files
@@ -312,9 +321,11 @@ async function checkElement(elementInfo, element, method) {
     else if (element.mtime > mtime || mtime === null) {
       printFileStatus(element.filename, " <== database");
       await getElement(elementInfo, element);
+      syncReceivedFiles.push(element.filename);
     } else if (element.mtime < mtime) {
       printFileStatus(element.filename, " ==> database");
       await putElement(elementInfo, element, mtime);
+      syncSentFiles.push(element.filename);
     } else printFileStatus(element.filename, "     unchanged");
   }
 }
@@ -349,6 +360,7 @@ async function checkElements(elementInfo, elements, method) {
       if (elementInfo.hasRegisteredUpdated === true) element.mtime = parseDateTimeString(element.updated ? element.updated : element.registered);
 
       if (element.filename) {
+        element.filename = element.filename.replace("//", "/"); // Fix for files on root, where folder will become //
         element.filename = element.filename.replace(/:/g, ""); // Replace colon as it is illegal in filenames
         filenamesMap[elementInfo.table + ":" + element.id] = element.filename; // Remember filename in case children use it
         await checkElement(elementInfo, element, method);
@@ -381,7 +393,7 @@ function addWhereClause(url, field, operator, value) {
 }
 
 function getAllFiles(allFiles, path) {
-  const entries = fs.readdirSync(path, {withFileTypes: true});
+  const entries = fs.readdirSync(path, { withFileTypes: true });
   for (const entry of entries) {
     const name = path + "/" + entry.name;
     if (entry.isDirectory()) getAllFiles(allFiles, name);
@@ -393,8 +405,8 @@ function deleteUnknownFiles(path) {
   const allFiles = {};
   getAllFiles(allFiles, path)
   for (const filename in allFiles) {
-    if (!filename in knownFiles) {
-      printOutput(2, "Deleting unknown file: " + filename);
+    if (!(filename in knownFiles)) {
+      printOutput(1, "Deleting unknown file: " + filename);
       fs.unlinkSync(filename);
     }
   }
@@ -445,13 +457,12 @@ async function doTable(elementInfo, elementType, method, pathStartsWith, isTopLe
   }
 }
 
-function usage(error)
-{
+function usage(error) {
   if (error)
     printOutput(0, error);
   printOutput(
     0,
-    "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith] [-t targetPath] [-v verboseLevel|1] [--cleanFolder]"
+    "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith] [-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut]"
   );
 }
 
@@ -470,10 +481,13 @@ async function main() {
     else if (myArgs[i] === "-y" && i + 1 < myArgs.length) elementTypes = myArgs[++i];
     else if (myArgs[i] === "-v" && i + 1 < myArgs.length) verboseLevel = parseInt(myArgs[++i]);
     else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
+    else if (myArgs[i] === "--noPut") noPut = true;
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
 
   if (methods.indexOf(method) < 0 || !endpoint) return usage();
+
+  if (noPut) printOutput(0, "noPut is true, no files will be pushed to server!");
 
   printOutput(1, ""); // Blank line
   const tmp = elementTypes.split(",");
@@ -486,6 +500,18 @@ async function main() {
 
     await doTable(dbToDisk[elementType], elementType, method, pathStartsWith, true);
   }
+
+  if (method === "sync" && verboseLevel < 2) {
+    if (syncSentFiles.length > 0)
+      printOutput(0, "Sent files: \r\n- " + syncSentFiles.join("\r\n- ") + "\r\n");
+    else
+      printOutput(0, "No sent files");
+    if (syncReceivedFiles.length > 0)
+      printOutput(0, "Received files: \r\n- " + syncReceivedFiles.join("\r\n- ") + "\r\n");
+    else
+      printOutput(0, "No received files");
+  }
+
   printOutput(1, "Done"); // Blank line
 }
 
