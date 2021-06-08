@@ -20,30 +20,30 @@ const client = axios.create({
 
 var options = {
   url: '',
-  username: 'dbss_ad',
-  password: 'Qwerty12',
+  username: 'xxxx',
+  password: 'zzzz',
   workstation: '',
   domain: ''
 };
 
 client.interceptors.response.use(
   (response) => {
-      printOutput(3,'NTLM: Response:', response);
-      return response;
+    printOutput(3, 'NTLM: Response:', response);
+    return response;
   },
   (err) => {
-      printOutput(3,'NTLM: Response error:',err);
-      const error = err.response;
-      if (error && error.status === 401 && error.headers['www-authenticate'] && error.headers['www-authenticate'] === 'Negotiate, NTLM' && !err.config.headers['X-retry']) {
-        printOutput(3, "NTLM: sendType1Message");
-          // TYPE 1 MESSAGE
-          return sendType1Message();
-      } else if (error && error.status === 401 && error.headers['www-authenticate'] && error.headers['www-authenticate'].substring(0,4) === 'NTLM' ) {
-           // TYPE 2 MESSAGE PARSE ANS TYPE 3 MESSAGE SEND
-           printOutput(3, "sendType3Message");
-           return sendType3Message(error.headers['www-authenticate']);
-      }
-      return err;
+    printOutput(3, 'NTLM: Response error:', err);
+    const error = err.response;
+    if (error && error.status === 401 && error.headers['www-authenticate'] && error.headers['www-authenticate'] === 'Negotiate, NTLM' && !err.config.headers['X-retry']) {
+      printOutput(3, "NTLM: sendType1Message");
+      // TYPE 1 MESSAGE
+      return sendType1Message();
+    } else if (error && error.status === 401 && error.headers['www-authenticate'] && error.headers['www-authenticate'].substring(0, 4) === 'NTLM') {
+      // TYPE 2 MESSAGE PARSE ANS TYPE 3 MESSAGE SEND
+      printOutput(3, "sendType3Message");
+      return sendType3Message(error.headers['www-authenticate']);
+    }
+    return err;
   },
 );
 
@@ -55,12 +55,12 @@ client.interceptors.request.use((request) => {
 const sendType1Message = () => {
   var type1msg = ntlm.createType1Message(options);
   return client({
-      method: 'get',
-      url: options.url,
-      headers:{
-          'Connection' : 'keep-alive',
-          'Authorization': type1msg
-      },
+    method: 'get',
+    url: options.url,
+    headers: {
+      'Connection': 'keep-alive',
+      'Authorization': type1msg
+    },
   });
 };
 
@@ -68,14 +68,14 @@ const sendType3Message = token => {
   var type2msg = ntlm.parseType2Message(token, (err) => { console.log(err) });
   var type3msg = ntlm.createType3Message(type2msg, options);
   return client({
-      method: 'get',
-      url: options.url,
-      headers:{
-          'X-retry' : 'false',
-          'Connection' : 'Close',
-          'Authorization': type3msg
-      },
-      })
+    method: 'get',
+    url: options.url,
+    headers: {
+      'X-retry': 'false',
+      'Connection': 'Close',
+      'Authorization': type3msg
+    },
+  })
 }
 
 let endpoint = "";
@@ -519,7 +519,7 @@ async function doTable(elementInfo, elementType, method, pathStartsWith, isTopLe
 
   printOutput(3, url);
   options.url = url;
-  const response = await client({method: 'get', url: url});
+  const response = await client({ method: 'get', url: url });
   printOutput(3, response.data);
   await checkElements(elementInfo, response.data[elementType], method);
 
