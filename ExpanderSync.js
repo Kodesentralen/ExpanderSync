@@ -3,6 +3,80 @@ var fs = require("fs");
 var path = require("path");
 const { cpuUsage } = require("process");
 const elementTypes = require("./elementTypes.js");
+const https = require('https');
+const ntlm = require('./ntlm');
+const httpsAgent = new https.Agent({ keepAlive: true, rejectUnauthorized: false });
+
+const client = axios.create({
+  httpsAgent,
+  agent: httpsAgent,
+  withCredentials: true,
+  shouldKeepAlive: true,
+  keepAlive: true,
+  keepAliveMsecs: 3000,
+  maxRedirects: 0,
+  'Access-Control-Allow-Origin': '*',
+});
+
+var options = {
+  url: '',
+  username: 'dbss_ad',
+  password: 'Qwerty12',
+  workstation: '',
+  domain: ''
+};
+
+client.interceptors.response.use(
+  (response) => {
+      printOutput(3,'NTLM: Response:', response);
+      return response;
+  },
+  (err) => {
+      printOutput(3,'NTLM: Response error:',err);
+      const error = err.response;
+      if (error && error.status === 401 && error.headers['www-authenticate'] && error.headers['www-authenticate'] === 'Negotiate, NTLM' && !err.config.headers['X-retry']) {
+        printOutput(3, "NTLM: sendType1Message");
+          // TYPE 1 MESSAGE
+          return sendType1Message();
+      } else if (error && error.status === 401 && error.headers['www-authenticate'] && error.headers['www-authenticate'].substring(0,4) === 'NTLM' ) {
+           // TYPE 2 MESSAGE PARSE ANS TYPE 3 MESSAGE SEND
+           printOutput(3, "sendType3Message");
+           return sendType3Message(error.headers['www-authenticate']);
+      }
+      return err;
+  },
+);
+
+client.interceptors.request.use((request) => {
+  printOutput(3, 'NTLM: Starting Request', request);
+  return request;
+});
+
+const sendType1Message = () => {
+  var type1msg = ntlm.createType1Message(options);
+  return client({
+      method: 'get',
+      url: options.url,
+      headers:{
+          'Connection' : 'keep-alive',
+          'Authorization': type1msg
+      },
+  });
+};
+
+const sendType3Message = token => {
+  var type2msg = ntlm.parseType2Message(token, (err) => { console.log(err) });
+  var type3msg = ntlm.createType3Message(type2msg, options);
+  return client({
+      method: 'get',
+      url: options.url,
+      headers:{
+          'X-retry' : 'false',
+          'Connection' : 'Close',
+          'Authorization': type3msg
+      },
+      })
+}
 
 let endpoint = "";
 let targetPath = "./";
@@ -11,6 +85,7 @@ let debug = false;
 let verboseLevel = 1;
 let cleanFolders = false;
 let noPut = false;
+let ignoreJSONFiles = false;
 const filenamesMap = {}; // Map of filenames so that children can lookup parents
 let memoryFile = {}; // Map of files that are built in memory since they have multiple writes. Payload is { data: obj/string, mtime, indent }
 const knownFiles = {}; // Map of created files. Used to know what files we have created. 
@@ -189,14 +264,17 @@ function createFolderAndFile(filename, data, mtime) {
     const targetFolder = path.dirname(filename);
     fs.mkdirSync(targetFolder, { recursive: true });
 
-    // Write file if content is different. We ignore \r in comparing
-    let existingData = null;
-    if (fs.existsSync(filename))
-      existingData = fs.readFileSync(filename, 'utf8').replace(/\r/g, "");
-    if (existingData !== data.replace(/\r/g, "")) {
-      fs.writeFileSync(filename, data);
+    // Write file if content is different. We ignore \r in comparing. Skip .json files if so asked.
+    if (ignoreJSONFiles === false || path.extname(filename).toLowerCase() !== ".json") {
+      let existingData = null;
+      if (fs.existsSync(filename))
+        existingData = fs.readFileSync(filename, 'utf8').replace(/\r/g, "");
+      if (existingData !== data.replace(/\r/g, "")) {
+        fs.writeFileSync(filename, data);
+      }
+      if (mtime) fs.utimesSync(filename, mtime, mtime);
     }
-    if (mtime) fs.utimesSync(filename, mtime, mtime);
+
     knownFiles[filename] = true;
   }
 }
@@ -440,7 +518,8 @@ async function doTable(elementInfo, elementType, method, pathStartsWith, isTopLe
   }
 
   printOutput(3, url);
-  const response = await axios.get(url);
+  options.url = url;
+  const response = await client({method: 'get', url: url});
   printOutput(3, response.data);
   await checkElements(elementInfo, response.data[elementType], method);
 
@@ -462,7 +541,7 @@ function usage(error) {
     printOutput(0, error);
   printOutput(
     0,
-    "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith] [-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut]"
+    "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith] [-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut] [--ignoreJSONFiles]"
   );
 }
 
@@ -482,6 +561,7 @@ async function main() {
     else if (myArgs[i] === "-v" && i + 1 < myArgs.length) verboseLevel = parseInt(myArgs[++i]);
     else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
     else if (myArgs[i] === "--noPut") noPut = true;
+    else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
 

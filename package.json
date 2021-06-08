@@ -4,7 +4,10 @@
   "description": "Tool for syncing SuperOffice Customizations between local drive and installation",
   "main": "ExpanderSync.js",
   "dependencies": {
-    "axios": "^0.19.2"
+    "axios": "^0.19.2",
+    "axios-ntlm": "^1.1.5",
+    "browserify-cipher": "^1.0.1",
+    "js-md4": "^0.3.2"
   },
   "devDependencies": {},
   "scripts": {
