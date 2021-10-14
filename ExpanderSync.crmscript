@@ -2,7 +2,7 @@
 <%
 #setLanguageLevel 3;
 
-String legalTables = ",ejscript,screen_definition,screen_definition_element,screen_definition_action,screen_definition_hidden,screen_definition_language,item_config,extra_tables,extra_fields,";
+String legalTables = ",ejscript,screen_chooser,screen_definition,screen_definition_element,screen_definition_action,screen_definition_hidden,screen_definition_language,item_config,extra_tables,extra_fields,";
 
 String verb = getHttpHeader("REQUEST_METHOD");
 String table = getCgiVariable("table");

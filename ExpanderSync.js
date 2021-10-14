@@ -562,6 +562,7 @@ async function main() {
     else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
     else if (myArgs[i] === "--noPut") noPut = true;
     else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
+    else if (myArgs[i] === "--ejscriptCorrectFolder") dbToDisk.ejscript.filename = "ejscript/${folder}/${name}"; // No separate subfolder per script
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
 
