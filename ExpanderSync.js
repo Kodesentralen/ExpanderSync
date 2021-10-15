@@ -408,6 +408,11 @@ async function checkElement(elementInfo, element, method) {
   }
 }
 
+String.prototype.myReplaceAll = function (search, replacement) {
+  var target = this;
+  return target.split(search).join(replacement);
+};
+
 async function checkElements(elementInfo, elements, method) {
   if (elements && Array.isArray(elements)) {
     let counter = 1;
@@ -439,7 +444,12 @@ async function checkElements(elementInfo, elements, method) {
 
       if (element.filename) {
         element.filename = element.filename.replace("//", "/"); // Fix for files on root, where folder will become //
-        element.filename = element.filename.replace(/:/g, ""); // Replace colon as it is illegal in filenames
+
+        // Escape illegal characters in filename
+        const charsToEscape = ".$:\"<>#%&{}!@";
+        for (let i = 0; i < charsToEscape.length; i++) {
+          element.filename = element.filename.myReplaceAll(charsToEscape[i], "_");
+        }
         filenamesMap[elementInfo.table + ":" + element.id] = element.filename; // Remember filename in case children use it
         await checkElement(elementInfo, element, method);
       }
