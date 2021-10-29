@@ -295,7 +295,7 @@ function appendToNavigationFile(filename, element) {
     memoryFile[filename] = { data: "" };
 
   let indent = memoryFile[filename].indent || 0;
-  if (element.element_type === 301) indent--;
+  if (element.element_type === 301 && indent > 0) indent--;
   else {
     let line =
       "    ".repeat(indent) +
