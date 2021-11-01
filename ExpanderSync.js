@@ -89,6 +89,7 @@ let ignoreJSONFiles = false;
 const filenamesMap = {}; // Map of filenames so that children can lookup parents
 let memoryFile = {}; // Map of files that are built in memory since they have multiple writes. Payload is { data: obj/string, mtime, indent }
 const knownFiles = {}; // Map of created files. Used to know what files we have created. 
+const ignore = []; // Array of path's to ignore, e.g. "screen_definition/System screens"
 
 // Summary of sync
 const syncSentFiles = [];
@@ -259,20 +260,33 @@ async function putElement(elementInfo, element, mtime) {
   }
 }
 
+// Check if file should be ignored. If so, then return true.
+function fileShouldBeIgnored(filename) {
+  for (const path of ignore) {
+    const fullPath = targetPath + path;
+    if (path.length > 0 && filename.substring(0, fullPath.length) === fullPath)
+      return true;
+  }
+
+  return false;
+}
+
 function createFolderAndFile(filename, data, mtime) {
   if (data) {
-    const targetFolder = path.dirname(filename);
-    fs.mkdirSync(targetFolder, { recursive: true });
+    if (!fileShouldBeIgnored(filename)) {
+      const targetFolder = path.dirname(filename);
+      fs.mkdirSync(targetFolder, { recursive: true });
 
-    // Write file if content is different. We ignore \r in comparing. Skip .json files if so asked.
-    if (ignoreJSONFiles === false || path.extname(filename).toLowerCase() !== ".json") {
-      let existingData = null;
-      if (fs.existsSync(filename))
-        existingData = fs.readFileSync(filename, 'utf8').replace(/\r/g, "");
-      if (existingData !== data.replace(/\r/g, "")) {
-        fs.writeFileSync(filename, data);
+      // Write file if content is different. We ignore \r in comparing. Skip .json files if so asked.
+      if (ignoreJSONFiles === false || path.extname(filename).toLowerCase() !== ".json") {
+        let existingData = null;
+        if (fs.existsSync(filename))
+          existingData = fs.readFileSync(filename, 'utf8').replace(/\r/g, "");
+        if (existingData !== data.replace(/\r/g, "")) {
+          fs.writeFileSync(filename, data);
+        }
+        if (mtime) fs.utimesSync(filename, mtime, mtime);
       }
-      if (mtime) fs.utimesSync(filename, mtime, mtime);
     }
 
     knownFiles[filename] = true;
@@ -494,8 +508,10 @@ function deleteUnknownFiles(path) {
   getAllFiles(allFiles, path)
   for (const filename in allFiles) {
     if (!(filename in knownFiles)) {
-      printOutput(1, "Deleting unknown file: " + filename);
-      fs.unlinkSync(filename);
+      if (!fileShouldBeIgnored(filename)) {
+        printOutput(1, "Deleting unknown file: " + filename);
+        fs.unlinkSync(filename);
+      }
     }
   }
 }
@@ -569,6 +585,7 @@ async function main() {
     else if (myArgs[i] === "-t" && i + 1 < myArgs.length) targetPath = myArgs[++i];
     else if (myArgs[i] === "-y" && i + 1 < myArgs.length) elementTypes = myArgs[++i];
     else if (myArgs[i] === "-v" && i + 1 < myArgs.length) verboseLevel = parseInt(myArgs[++i]);
+    else if (myArgs[i] === "--ignore" && i + 1 < myArgs.length) ignore.push(myArgs[++i]);
     else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
     else if (myArgs[i] === "--noPut") noPut = true;
     else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
