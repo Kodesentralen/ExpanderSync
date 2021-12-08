@@ -90,6 +90,9 @@ const filenamesMap = {}; // Map of filenames so that children can lookup parents
 let memoryFile = {}; // Map of files that are built in memory since they have multiple writes. Payload is { data: obj/string, mtime, indent }
 const knownFiles = {}; // Map of created files. Used to know what files we have created. 
 const ignore = []; // Array of path's to ignore, e.g. "screen_definition/System screens"
+let escapeCharacters = ".$:\"<>#%&{}!@";
+let escapeWith = "_";
+let elementTypesToProcess = "ejscript";
 
 // Summary of sync
 const syncSentFiles = [];
@@ -460,9 +463,8 @@ async function checkElements(elementInfo, elements, method) {
         element.filename = element.filename.replace("//", "/"); // Fix for files on root, where folder will become //
 
         // Escape illegal characters in filename
-        const charsToEscape = ".$:\"<>#%&{}!@";
-        for (let i = 0; i < charsToEscape.length; i++) {
-          element.filename = element.filename.myReplaceAll(charsToEscape[i], "_");
+        for (let i = 0; i < escapeCharacters.length; i++) {
+          element.filename = element.filename.myReplaceAll(escapeCharacters[i], escapeWith);
         }
         filenamesMap[elementInfo.table + ":" + element.id] = element.filename; // Remember filename in case children use it
         await checkElement(elementInfo, element, method);
@@ -567,14 +569,42 @@ function usage(error) {
     printOutput(0, error);
   printOutput(
     0,
-    "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith] [-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut] [--ignoreJSONFiles]"
+    "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith]\r\n" + 
+    "[-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut] [--ignoreJSONFiles]\r\n" + 
+    "[--dumpTable tableName fields minId maxId]\r\n" +
+    "[--escapeCharaceters charsToEscape] [--escapeWith stringToReplaceWith]"
   );
+}
+
+function addDumpTable(table, fields, minId, maxId) {
+  const json = fields.split(",").map((e) => e + ":String").join(",");
+
+  dbToDisk[table] = {
+    cleanFolder: "data/" + table,
+    fields: fields,
+    jsonFile: false,
+    filename: "data/" + table + "/${id}.json",
+    jsonFile: true,
+    json: json,
+    where: [
+      {
+        field: "id",
+        operator: "gte",
+        value: minId
+      },
+      {
+        field: "id",
+        operator: "lte",
+        value: maxId
+      }
+    ]
+  }
+  elementTypesToProcess += "," + table;
 }
 
 async function main() {
   const myArgs = process.argv.slice(2);
   const methods = ["status", "sync", "get", "put"];
-  let elementTypes = "ejscript";
   let method = "";
   let pathStartsWith = "";
 
@@ -583,13 +613,16 @@ async function main() {
     else if (myArgs[i] === "-m" && i + 1 < myArgs.length) method = myArgs[++i];
     else if (myArgs[i] === "-p" && i + 1 < myArgs.length) pathStartsWith = myArgs[++i];
     else if (myArgs[i] === "-t" && i + 1 < myArgs.length) targetPath = myArgs[++i];
-    else if (myArgs[i] === "-y" && i + 1 < myArgs.length) elementTypes = myArgs[++i];
+    else if (myArgs[i] === "-y" && i + 1 < myArgs.length) elementTypesToProcess = myArgs[++i];
     else if (myArgs[i] === "-v" && i + 1 < myArgs.length) verboseLevel = parseInt(myArgs[++i]);
     else if (myArgs[i] === "--ignore" && i + 1 < myArgs.length) ignore.push(myArgs[++i]);
     else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
     else if (myArgs[i] === "--noPut") noPut = true;
     else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
     else if (myArgs[i] === "--ejscriptCorrectFolder") dbToDisk.ejscript.filename = "ejscript/${folder}/${name}"; // No separate subfolder per script
+    else if (myArgs[i] === "--escapeCharacters" && i + 1 < myArgs.length) escapeCharacters = myArgs[++i];
+    else if (myArgs[i] === "--escapeWith" && i + 1 < myArgs.length) escapeWith = myArgs[++i];
+    else if (myArgs[i] === "--dumpTable" && i + 4 < myArgs.length) addDumpTable(myArgs[++i], myArgs[++i], myArgs[++i], myArgs[++i]);
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
 
@@ -598,7 +631,7 @@ async function main() {
   if (noPut) printOutput(0, "noPut is true, no files will be pushed to server!");
 
   printOutput(1, ""); // Blank line
-  const tmp = elementTypes.split(",");
+  const tmp = elementTypesToProcess.split(",");
   for (elementType of tmp) {
     printOutput(1, "ElementType: " + elementType);
     if (!(elementType in dbToDisk)) {

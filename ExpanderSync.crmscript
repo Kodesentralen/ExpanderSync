@@ -9,7 +9,7 @@ String table = getCgiVariable("table");
 String fields = getCgiVariable("fields");
 String json = getCgiVariable("json");
 
-if (legalTables.find("," + table + ",") < 0)
+if (legalTables.find("," + table + ",") < 0 && table.subString(0, 2) != "y_")
   throw "Unsupported table";
 
 
