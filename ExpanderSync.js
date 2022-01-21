@@ -571,12 +571,46 @@ function usage(error) {
     0,
     "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith]\r\n" + 
     "[-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut] [--ignoreJSONFiles]\r\n" + 
-    "[--dumpTable tableName fields minId maxId]\r\n" +
+    "[--dumpTable tableName fields id-range]\r\n" +
     "[--escapeCharaceters charsToEscape] [--escapeWith stringToReplaceWith]"
   );
 }
 
-function addDumpTable(table, fields, minId, maxId) {
+/*
+  Calculate a string of ids based on supported idRange syntax, which is like this: 1-10,22,33-40,!35-37,!39
+  Single numbers are straight forward, ranges are inclusive, ! means to remove these ones (must have been added first)
+*/
+function calculateIdRange(idRange) {
+  let ids = [];
+  const parts = idRange.split(",");
+  for (let part of parts) {
+    let remove = false; // Whether to remove this part
+    if (part.substring(0, 1) === "!") {
+      remove = true;
+      part = part.substring(1);
+    }
+    const startEnd = part.split("-");
+    if (startEnd.length === 1) // Single digit
+      startEnd.push(startEnd[0]); // Convert to [start, start], i.e. array of same value twice
+    const start = parseInt(startEnd[0]);
+    const end = parseInt(startEnd[1]);
+    if (start > end) throw "calculateIdRange: start cannot be larger than end: " + part;
+    if (end - start > 500) throw "calculateIdRange: range is too long: " + part;
+    
+    if (remove) {
+      for (let i = start; i <= end; i++)
+        ids = ids.filter((v) => v !== i);
+    }
+    else {
+      for (let i = start; i <= end; i++)
+        ids.push(i);
+    }
+  }
+
+  return ids.join(",");
+}
+
+function addDumpTable(table, fields, idRange) {
   const json = fields.split(",").map((e) => e + ":String").join(",");
 
   dbToDisk[table] = {
@@ -589,13 +623,8 @@ function addDumpTable(table, fields, minId, maxId) {
     where: [
       {
         field: "id",
-        operator: "gte",
-        value: minId
-      },
-      {
-        field: "id",
-        operator: "lte",
-        value: maxId
+        operator: "in",
+        value: calculateIdRange(idRange)
       }
     ]
   }
@@ -622,7 +651,7 @@ async function main() {
     else if (myArgs[i] === "--ejscriptCorrectFolder") dbToDisk.ejscript.filename = "ejscript/${folder}/${name}"; // No separate subfolder per script
     else if (myArgs[i] === "--escapeCharacters" && i + 1 < myArgs.length) escapeCharacters = myArgs[++i];
     else if (myArgs[i] === "--escapeWith" && i + 1 < myArgs.length) escapeWith = myArgs[++i];
-    else if (myArgs[i] === "--dumpTable" && i + 4 < myArgs.length) addDumpTable(myArgs[++i], myArgs[++i], myArgs[++i], myArgs[++i]);
+    else if (myArgs[i] === "--dumpTable" && i + 3 < myArgs.length) addDumpTable(myArgs[++i], myArgs[++i], myArgs[++i]);
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
 
