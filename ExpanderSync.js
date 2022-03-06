@@ -6,6 +6,8 @@ const elementTypes = require("./elementTypes.js");
 const https = require('https');
 const ntlm = require('./ntlm');
 const httpsAgent = new https.Agent({ keepAlive: true, rejectUnauthorized: false });
+let method = "";
+let pathStartsWith = "";
 
 const client = axios.create({
   httpsAgent,
@@ -532,8 +534,10 @@ async function doTable(elementInfo, elementType, method, pathStartsWith, isTopLe
     "&json=" +
     encodeURIComponent(elementInfo.json);
 
-  // Add path restriction
-  if (pathStartsWith != "") url = addWhereClause(url, elementInfo.folderField, "beginsWith", pathStartsWith);
+  // Add path restriction, except for tables that ignore this
+  if (pathStartsWith != "" && elementInfo.ignorePathStartsWith !== true) {
+    url = addWhereClause(url, elementInfo.folderField, "beginsWith", pathStartsWith);
+  }
 
   // Add custom where clauses
   if (elementInfo.where) {
@@ -620,6 +624,7 @@ function addDumpTable(table, fields, idRange) {
     filename: "data/" + table + "/${id}.json",
     jsonFile: true,
     json: json,
+    ignorePathStartsWith: true,
     where: [
       {
         field: "id",
@@ -631,14 +636,18 @@ function addDumpTable(table, fields, idRange) {
   elementTypesToProcess += "," + table;
 }
 
-async function main() {
-  const myArgs = process.argv.slice(2);
-  const methods = ["status", "sync", "get", "put"];
-  let method = "";
-  let pathStartsWith = "";
+function loadConfigFile(filename) {
+  let rawdata = fs.readFileSync(filename);
+  let config = JSON.parse(rawdata);
+  if (config.parameters && Array.isArray(config.parameters)) {
+    parseArgs(config.parameters);
+  }
+}
 
+function parseArgs(myArgs) {
   for (var i = 0; i < myArgs.length; i++) {
-    if (myArgs[i] === "-e" && i + 1 < myArgs.length) endpoint = myArgs[++i];
+    if (myArgs[i] === "--configFile" && i + 1 < myArgs.length) loadConfigFile(myArgs[++i]);
+    else if (myArgs[i] === "-e" && i + 1 < myArgs.length) endpoint = myArgs[++i];
     else if (myArgs[i] === "-m" && i + 1 < myArgs.length) method = myArgs[++i];
     else if (myArgs[i] === "-p" && i + 1 < myArgs.length) pathStartsWith = myArgs[++i];
     else if (myArgs[i] === "-t" && i + 1 < myArgs.length) targetPath = myArgs[++i];
@@ -654,6 +663,13 @@ async function main() {
     else if (myArgs[i] === "--dumpTable" && i + 3 < myArgs.length) addDumpTable(myArgs[++i], myArgs[++i], myArgs[++i]);
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
+}
+
+async function main() {
+  const myArgs = process.argv.slice(2);
+  const methods = ["status", "sync", "get", "put"];
+
+  parseArgs(myArgs);
 
   if (methods.indexOf(method) < 0 || !endpoint) return usage();
 
