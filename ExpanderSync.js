@@ -95,7 +95,7 @@ const ignore = []; // Array of path's to ignore, e.g. "screen_definition/System 
 let escapeCharacters = ".$:\"<>#%&{}!@";
 let escapeWith = "_";
 let elementTypesToProcess = "ejscript";
-
+let screenElementNameOnlyFromId = -1; // Using DB id as a part of the filename for screen_definition_element was a stupid ID. This variable allows for using name only (if set) for all new elements we create
 // Summary of sync
 const syncSentFiles = [];
 const syncReceivedFiles = [];
@@ -267,13 +267,17 @@ async function putElement(elementInfo, element, mtime) {
 
 // Check if file should be ignored. If so, then return true.
 function fileShouldBeIgnored(filename) {
+  let result = false;
   for (const path of ignore) {
+    if (path.length > 1 && path[0] === '*' && filename.indexOf(path.substring(1)) >= 0) 
+      result = true;
+
     const fullPath = targetPath + path;
     if (path.length > 0 && filename.substring(0, fullPath.length) === fullPath)
-      return true;
+      result = true;
   }
 
-  return false;
+  return result;
 }
 
 function createFolderAndFile(filename, data, mtime) {
@@ -456,7 +460,16 @@ async function checkElements(elementInfo, elements, method) {
 
       if (element.filename) {
       } // Do nothing
-      else if (elementInfo.filename) element.filename = evaluateTemplate(elementInfo.filename, element);
+      else if (elementInfo.filename) {
+        // Hack to get some better element names without DB id
+        let tmp = elementInfo.filename;
+        if (elementInfo.table === "screen_definition_element" && 
+          screenElementNameOnlyFromId > 0 && element.id >= screenElementNameOnlyFromId &&
+          element.name) 
+          tmp = tmp.replace("${id}-", "");
+
+        element.filename = evaluateTemplate(tmp, element);
+      }
       else if (elementInfo.filenameLookup) element.filename = filenamesMap[evaluateTemplate(elementInfo.filenameLookup, element)];
       else element.filename = element.folder + "/" + element.name;
       if (elementInfo.hasRegisteredUpdated === true) element.mtime = parseDateTimeString(element.updated ? element.updated : element.registered);
@@ -576,7 +589,9 @@ function usage(error) {
     "Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith]\r\n" + 
     "[-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut] [--ignoreJSONFiles]\r\n" + 
     "[--dumpTable tableName fields id-range]\r\n" +
-    "[--escapeCharaceters charsToEscape] [--escapeWith stringToReplaceWith]"
+    "[--escapeCharaceters charsToEscape] [--escapeWith stringToReplaceWith]\r\n" + 
+    "[--screenElementNameOnlyFromId id]\r\n" + 
+    "[--ignore searchString]"
   );
 }
 
@@ -653,7 +668,7 @@ function parseArgs(myArgs) {
     else if (myArgs[i] === "-t" && i + 1 < myArgs.length) targetPath = myArgs[++i];
     else if (myArgs[i] === "-y" && i + 1 < myArgs.length) elementTypesToProcess = myArgs[++i];
     else if (myArgs[i] === "-v" && i + 1 < myArgs.length) verboseLevel = parseInt(myArgs[++i]);
-    else if (myArgs[i] === "--ignore" && i + 1 < myArgs.length) ignore.push(myArgs[++i]);
+    else if (myArgs[i] === "--ignore" && i + 1 < myArgs.length) ignore.push(myArgs[++i].replace("|", " "));
     else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
     else if (myArgs[i] === "--noPut") noPut = true;
     else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
@@ -661,6 +676,7 @@ function parseArgs(myArgs) {
     else if (myArgs[i] === "--escapeCharacters" && i + 1 < myArgs.length) escapeCharacters = myArgs[++i];
     else if (myArgs[i] === "--escapeWith" && i + 1 < myArgs.length) escapeWith = myArgs[++i];
     else if (myArgs[i] === "--dumpTable" && i + 3 < myArgs.length) addDumpTable(myArgs[++i], myArgs[++i], myArgs[++i]);
+    else if (myArgs[i] === "--screenElementNameOnlyFromId" && i + 1 < myArgs.length) screenElementNameOnlyFromId = parseInt(myArgs[++i]);
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
 }
