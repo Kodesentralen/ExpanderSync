@@ -92,6 +92,7 @@ const filenamesMap = {}; // Map of filenames so that children can lookup parents
 let memoryFile = {}; // Map of files that are built in memory since they have multiple writes. Payload is { data: obj/string, mtime, indent }
 const knownFiles = {}; // Map of created files. Used to know what files we have created. 
 const ignore = []; // Array of path's to ignore, e.g. "screen_definition/System screens"
+const includeOnly = []; // Oposite of ignore, array of paths to only include. If array is empty, all is included.
 let escapeCharacters = ".$:\"<>#%&{}!@";
 let escapeWith = "_";
 let elementTypesToProcess = "ejscript";
@@ -193,6 +194,7 @@ const dbToDisk = {
       "id:Integer,table_name:String,name:String,search_header:String,view_entry_header:String,new_entry_header:String,edit_entry_header:String,folder:String,display_field:String,description:String",
     jsonFile: true,
     filename: "extra_tables/${folder}/${table_name}",
+    folderField: "hierarchy_id.fullname",
     children: {
       extra_fields: {
         fields: "id,domain,extra_table,target_extra_table.table_name,field_name,name,default_value,type,flags,params,description",
@@ -202,6 +204,7 @@ const dbToDisk = {
         order: "extra_fields.order_pos",
         jsonFile: true,
         appendToJson: "extra_fields",
+        folderField: "extra_table.hierarchy_id.fullname",
       },
     },
   },
@@ -275,6 +278,16 @@ function fileShouldBeIgnored(filename) {
     const fullPath = targetPath + path;
     if (path.length > 0 && filename.substring(0, fullPath.length) === fullPath)
       result = true;
+  }
+
+  // If includeOnly array has items, then we only write files where the filename matches at least one of the includeOnly entries
+  if (includeOnly.length > 0) {
+    result = true;
+    for (const path of includeOnly) {
+      if (filename.indexOf(path) >= 0)
+        result = false;
+    }
+    printOutput(3, "includeOnly specified: " + filename + ", should be ignored: " + result);
   }
 
   return result;
@@ -591,7 +604,7 @@ function usage(error) {
     "[--dumpTable tableName fields id-range]\r\n" +
     "[--escapeCharaceters charsToEscape] [--escapeWith stringToReplaceWith]\r\n" + 
     "[--screenElementNameOnlyFromId id]\r\n" + 
-    "[--ignore searchString]"
+    "[--ignore searchString]* [--includeOnly searchString]*"
   );
 }
 
@@ -669,6 +682,7 @@ function parseArgs(myArgs) {
     else if (myArgs[i] === "-y" && i + 1 < myArgs.length) elementTypesToProcess = myArgs[++i];
     else if (myArgs[i] === "-v" && i + 1 < myArgs.length) verboseLevel = parseInt(myArgs[++i]);
     else if (myArgs[i] === "--ignore" && i + 1 < myArgs.length) ignore.push(myArgs[++i].replace("|", " "));
+    else if (myArgs[i] === "--includeOnly" && i + 1 < myArgs.length) includeOnly.push(myArgs[++i].replace("|", " "));
     else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
     else if (myArgs[i] === "--noPut") noPut = true;
     else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
