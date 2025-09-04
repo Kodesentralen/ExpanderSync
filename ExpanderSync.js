@@ -97,6 +97,8 @@ let escapeCharacters = ".$:\"<>#%&{}!@";
 let escapeWith = "_";
 let elementTypesToProcess = "ejscript";
 let screenElementNameOnlyFromId = -1; // Using DB id as a part of the filename for screen_definition_element was a stupid ID. This variable allows for using name only (if set) for all new elements we create
+let screenElementNameOnlyIds = []; // Better system, array of ids
+
 // Summary of sync
 const syncSentFiles = [];
 const syncReceivedFiles = [];
@@ -477,7 +479,8 @@ async function checkElements(elementInfo, elements, method) {
         // Hack to get some better element names without DB id
         let tmp = elementInfo.filename;
         if (elementInfo.table === "screen_definition_element" && 
-          screenElementNameOnlyFromId > 0 && element.id >= screenElementNameOnlyFromId &&
+          ((screenElementNameOnlyFromId > 0 && element.id >= screenElementNameOnlyFromId) ||
+           (screenElementNameOnlyIds.indexOf(element.id) >= 0)) &&
           element.name) 
           tmp = tmp.replace("${id}-", "");
 
@@ -604,7 +607,9 @@ function usage(error) {
     "[--dumpTable tableName fields id-range]\r\n" +
     "[--escapeCharaceters charsToEscape] [--escapeWith stringToReplaceWith]\r\n" + 
     "[--screenElementNameOnlyFromId id]\r\n" + 
-    "[--ignore searchString]* [--includeOnly searchString]*"
+    "[--ignore searchString]* [--includeOnly searchString]*" +
+    "[--screenElementNameOnlyIds id-range]\r\n" + 
+    "[--ignore searchString]"
   );
 }
 
@@ -612,7 +617,7 @@ function usage(error) {
   Calculate a string of ids based on supported idRange syntax, which is like this: 1-10,22,33-40,!35-37,!39
   Single numbers are straight forward, ranges are inclusive, ! means to remove these ones (must have been added first)
 */
-function calculateIdRange(idRange) {
+function calculateIdRange(idRange, returnAsArray) {
   let ids = [];
   const parts = idRange.split(",");
   for (let part of parts) {
@@ -639,6 +644,7 @@ function calculateIdRange(idRange) {
     }
   }
 
+  if (returnAsArray === true) return ids;
   return ids.join(",");
 }
 
@@ -691,6 +697,7 @@ function parseArgs(myArgs) {
     else if (myArgs[i] === "--escapeWith" && i + 1 < myArgs.length) escapeWith = myArgs[++i];
     else if (myArgs[i] === "--dumpTable" && i + 3 < myArgs.length) addDumpTable(myArgs[++i], myArgs[++i], myArgs[++i]);
     else if (myArgs[i] === "--screenElementNameOnlyFromId" && i + 1 < myArgs.length) screenElementNameOnlyFromId = parseInt(myArgs[++i]);
+    else if (myArgs[i] === "--screenElementNameOnlyIds" && i + 1 < myArgs.length) screenElementNameOnlyIds = calculateIdRange(myArgs[++i], true);
     else return usage("Error: unknown parameter: " + myArgs[i]);
   }
 }
