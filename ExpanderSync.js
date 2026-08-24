@@ -19,7 +19,7 @@ const client = axios.create({
 	shouldKeepAlive: true,
 	keepAlive: true,
 	keepAliveMsecs: 3000,
-	maxRedirects: 0,
+	maxRedirects: 1,
 	"Access-Control-Allow-Origin": "*",
 });
 
