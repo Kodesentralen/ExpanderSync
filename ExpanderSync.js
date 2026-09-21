@@ -3,6 +3,7 @@ var fs = require("fs");
 var path = require("path");
 const { cpuUsage } = require("process");
 const elementTypes = require("./elementTypes.js");
+const fetcherLayout = require("./fetcherLayout.js");
 const https = require("https");
 const ntlm = require("./ntlm");
 const httpsAgent = new https.Agent({
@@ -113,6 +114,8 @@ const scrambleSecrets = []; // Array of path's to scramble secrets in, e.g. "Con
 let escapeCharacters = '.$:"<>#%&{}!@';
 let escapeWith = "_";
 let elementTypesToProcess = "ejscript";
+let elementTypesSpecified = false; // Whether -y was given. Used by fetcher layout, where default is all
+let layout = "expander"; // "expander" or "fetcher" (same folder/file structure as CRMScript Fetcher)
 let screenElementNameOnlyFromId = -1; // Using DB id as a part of the filename for screen_definition_element was a stupid ID. This variable allows for using name only (if set) for all new elements we create
 let screenElementNameOnlyIds = []; // Better system, array of ids
 
@@ -351,8 +354,8 @@ function scrambleData(data) {
 	});
 }
 
-function createFolderAndFile(filename, data, mtime) {
-	if (data) {
+function createFolderAndFile(filename, data, mtime, writeEmpty) {
+	if (data || (writeEmpty === true && data === "")) {
 		if (!fileShouldBeIgnored(filename)) {
 			const targetFolder = path.dirname(filename);
 			fs.mkdirSync(targetFolder, { recursive: true });
@@ -715,7 +718,9 @@ function usage(error) {
 			"[--screenElementNameOnlyFromId id]\r\n" +
 			"[--ignore searchString]* [--includeOnly searchString]*" +
 			"[--screenElementNameOnlyIds id-range]\r\n" +
-			"[--ignore searchString]",
+			"[--ignore searchString]\r\n" +
+			"[--layout 'expander'|'fetcher'] (fetcher: -e must point to the crmscript_fetcher script, only -m get is supported,\r\n" +
+			"  -y scripts,triggers,screens,screen_choosers,scheduled_tasks,extra_tables, default all)",
 		"[--scrambleSecrets searchStringFilename]",
 	);
 }
@@ -801,8 +806,11 @@ function parseArgs(myArgs) {
 			pathStartsWith = myArgs[++i];
 		else if (myArgs[i] === "-t" && i + 1 < myArgs.length)
 			targetPath = myArgs[++i];
-		else if (myArgs[i] === "-y" && i + 1 < myArgs.length)
+		else if (myArgs[i] === "-y" && i + 1 < myArgs.length) {
 			elementTypesToProcess = myArgs[++i];
+			elementTypesSpecified = true;
+		} else if (myArgs[i] === "--layout" && i + 1 < myArgs.length)
+			layout = myArgs[++i];
 		else if (myArgs[i] === "-v" && i + 1 < myArgs.length)
 			verboseLevel = parseInt(myArgs[++i]);
 		else if (myArgs[i] === "--ignore" && i + 1 < myArgs.length)
@@ -841,6 +849,37 @@ async function main() {
 	const methods = ["status", "sync", "get", "put"];
 
 	parseArgs(myArgs);
+
+	if (targetPath !== "" && !targetPath.endsWith("/") && !targetPath.endsWith("\\"))
+		targetPath += "/";
+
+	if (layout === "fetcher") {
+		if (method === "") method = "get";
+		if (method !== "get" || !endpoint)
+			return usage("Error: fetcher layout requires -e and only supports -m get");
+		try {
+			await fetcherLayout.run({
+				client: client,
+				options: options,
+				endpoint: endpoint,
+				targetPath: targetPath,
+				groupList: elementTypesSpecified ? elementTypesToProcess : null,
+				cleanFolders: cleanFolders,
+				verboseLevel: verboseLevel,
+				knownFiles: knownFiles,
+				writeFile: (filename, data) => createFolderAndFile(filename, data, null, true),
+				isIgnored: fileShouldBeIgnored,
+				printOutput: printOutput,
+			});
+		} catch (e) {
+			printOutput(0, "Error: " + e);
+			process.exitCode = 1;
+			return;
+		}
+		printOutput(1, "Done");
+		return;
+	}
+	if (layout !== "expander") return usage("Error: unknown layout: " + layout);
 
 	if (methods.indexOf(method) < 0 || !endpoint) return usage();
 
