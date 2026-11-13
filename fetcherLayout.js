@@ -379,6 +379,147 @@ async function run(ctx) {
 			);
 }
 
+// Screen script files and the screen_definition fields they are stored in
+const screenScriptFields = {
+	"Creation script.crmscript": "creation_script",
+	"Loading script (before setFromCgi).crmscript": "load_script_body",
+	"Loading script (after setFromCgi).crmscript": "load_post_cgi_script_body",
+	"Load script (run after everything else).crmscript": "load_final_script_body",
+};
+
+function readJson(filename) {
+	try {
+		return JSON.parse(fs.readFileSync(filename, "utf8"));
+	} catch (e) {
+		return null;
+	}
+}
+
+// Find all .crmscript files below a folder
+function findScriptFiles(dir, result) {
+	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+		const name = path.join(dir, entry.name);
+		if (entry.isDirectory()) findScriptFiles(name, result);
+		else if (entry.name.toLowerCase().endsWith(".crmscript")) result.push(name);
+	}
+	return result;
+}
+
+/*
+  Find out where a local file is stored in the database, using the .json files written by "get".
+  Returns { table, id, field } or { table, screenId, button, field } for buttons (id is looked up later),
+  or { error } if the file cannot be pushed
+*/
+function locateFile(filename) {
+	const dir = path.dirname(filename);
+	const base = path.basename(filename);
+	if (!base.toLowerCase().endsWith(".crmscript")) return { error: "only .crmscript files can be pushed" };
+
+	// Screen scripts: the folder contains screen_definition.json
+	const screenJson = readJson(path.join(dir, "screen_definition.json"));
+	if (screenJson) {
+		if (!(base in screenScriptFields)) return { error: "unknown screen script file" };
+		return { table: "screen_definition", id: screenJson.id, field: screenScriptFields[base], screenScript: true };
+	}
+
+	// Buttons: Buttons folder inside a screen folder
+	if (path.basename(dir) === "Buttons") {
+		const parentJson = readJson(path.join(path.dirname(dir), "screen_definition.json"));
+		if (parentJson)
+			return { table: "screen_definition_action", screenId: parentJson.id, button: base, field: "ejscript_body" };
+	}
+
+	// Scripts, triggers and ScreenChoosers: <name>.crmscript next to <name>.json
+	const json = readJson(path.join(dir, base.substring(0, base.length - ".crmscript".length) + ".json"));
+	if (!json || json.id === undefined) return { error: "no matching .json file with id found. Run get first" };
+	if ("include_id" in json) return { table: "ejscript", id: json.id, field: "body", setUpdated: true };
+	if ("screen_type" in json) return { table: "screen_chooser", id: json.id, field: "ejscript", setUpdated: true };
+	return { error: "could not tell what kind of script this is from the .json file" };
+}
+
+// Look up screen_definition_action id from screen id and button file name
+async function lookupButtonId(ctx, cache, screenId, buttonFile) {
+	if (!(screenId in cache)) {
+		const url =
+			ctx.endpoint +
+			"&table=screen_definition_action&fields=id%2Cbutton&json=" +
+			encodeURIComponent("id:Integer,button:String") +
+			"&whereField.0=screen_definition&whereOperator.0=equals&whereValue.0=" +
+			encodeURIComponent(screenId);
+		ctx.printOutput(3, url);
+		ctx.options.url = url;
+		const response = await ctx.client({ method: "get", url: url });
+		const data = response && response.data;
+		if (!data || typeof data !== "object" || "script_version" in data || !Array.isArray(data.screen_definition_action))
+			throw "Unexpected response when looking up buttons. Is -e pointing to the ExpanderSync script (not crmscript_fetcher)?";
+		cache[screenId] = data.screen_definition_action;
+	}
+	const matches = cache[screenId].filter((a) => safeName(a.button + ".crmscript") === buttonFile);
+	if (matches.length !== 1) return { error: matches.length ? "several buttons with this name" : "button not found in database" };
+	return { id: matches[0].id };
+}
+
+/*
+  Push the given files to the database through the ExpanderSync endpoint. ctx contains:
+  files (from -f), targetPath, endpoint, noPut, client, options, post(url, obj), formatDate(date),
+  isScrambled(filename) and printOutput. Returns list of pushed (or, with noPut, would-be pushed) files
+*/
+async function put(ctx) {
+	// Expand -f entries to files. Entries can be relative to the current folder or to -t
+	const files = [];
+	for (const f of ctx.files) {
+		const found = [f, ctx.targetPath + f].find((c) => fs.existsSync(c));
+		if (!found) {
+			ctx.printOutput(0, "Warning: -f " + f + " does not exist");
+			continue;
+		}
+		if (fs.statSync(found).isDirectory()) findScriptFiles(found, files);
+		else files.push(found);
+	}
+
+	const updates = {}; // table:id -> { table, obj, files }
+	const buttonCache = {};
+	for (const file of files) {
+		if (ctx.isScrambled(file)) {
+			ctx.printOutput(0, "Warning: not pushing " + file + " since it matches --scrambleSecrets");
+			continue;
+		}
+		let loc = locateFile(file);
+		if (!loc.error && loc.table === "screen_definition_action") {
+			const lookup = await lookupButtonId(ctx, buttonCache, loc.screenId, loc.button);
+			loc = lookup.error ? lookup : Object.assign(loc, { id: lookup.id });
+		}
+		if (loc.error) {
+			ctx.printOutput(0, "Warning: skipping " + file + ": " + loc.error);
+			continue;
+		}
+
+		let body = fs.readFileSync(file, "utf8");
+		if (loc.screenScript && body === "None") body = ""; // Empty screen scripts are written as "None" by get
+
+		const key = loc.table + ":" + loc.id;
+		if (!(key in updates)) updates[key] = { table: loc.table, obj: { id: loc.id }, files: [] };
+		updates[key].obj[loc.field] = body;
+		if (loc.setUpdated) updates[key].obj.updated = ctx.formatDate(new Date());
+		updates[key].files.push(file);
+		ctx.printOutput(2, "* " + file + " ==> " + loc.table + " " + loc.id + " " + loc.field);
+	}
+
+	const sent = [];
+	for (const key in updates) {
+		const update = updates[key];
+		if (!ctx.noPut) {
+			const response = await ctx.post(ctx.endpoint + "&table=" + encodeURIComponent(update.table), update.obj);
+			if (response && response.data && typeof response.data === "object" && "script_version" in response.data)
+				throw "-e is pointing to crmscript_fetcher, which cannot save. Use the ExpanderSync script endpoint for put";
+		}
+		for (const file of update.files) sent.push(file + " (" + update.table + " " + update.obj.id + ")");
+	}
+	return sent;
+}
+
 exports.run = run;
+exports.put = put;
+exports.locateFile = locateFile;
 exports.buildLayout = buildLayout;
 exports.safeName = safeName;

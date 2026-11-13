@@ -111,6 +111,8 @@ const knownFiles = {}; // Map of created files. Used to know what files we have 
 const ignore = []; // Array of path's to ignore, e.g. "screen_definition/System screens"
 const includeOnly = []; // Oposite of ignore, array of paths to only include. If array is empty, all is included.
 const scrambleSecrets = []; // Array of path's to scramble secrets in, e.g. "Configuration.crmscript"
+const onlyFiles = []; // From -f: files (or folders) to limit processing to, e.g. when pushing a few changed files
+const onlyFilesMatched = {}; // -f entries that matched at least one element
 let escapeCharacters = '.$:"<>#%&{}!@';
 let escapeWith = "_";
 let elementTypesToProcess = "ejscript";
@@ -287,6 +289,15 @@ function printFileStatus(filename, status) {
 async function putElement(elementInfo, element, mtime) {
 	if (readOnly) return;
 
+	// Never push files that have their secrets scrambled locally, as that would overwrite the secrets in the database
+	for (const scriptFile of elementInfo.scriptFiles) {
+		const filename = targetPath + element.filename + "." + scriptFile + ".crmscript";
+		if (fileShouldBeScrambled(filename)) {
+			printOutput(0, "\r\nWarning: not pushing " + filename + " since it matches --scrambleSecrets");
+			return false;
+		}
+	}
+
 	// Build object to save
 	const obj = {};
 	for (const updateField of elementInfo.updateFields)
@@ -305,6 +316,7 @@ async function putElement(elementInfo, element, mtime) {
 			obj,
 		);
 	}
+	return true;
 }
 
 // Check if file should be ignored. If so, then return true.
@@ -382,6 +394,59 @@ function createFolderAndFile(filename, data, mtime, writeEmpty) {
 
 		knownFiles[filename] = true;
 	}
+}
+
+// Normalize a path for comparison: absolute, forward slashes, lower case (Windows/macOS are case insensitive)
+function normalizePath(p) {
+	return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+}
+
+// Resolve -f entries. Each entry can be relative to the current folder or to -t. Must be called after -t is known
+function resolveOnlyFiles() {
+	return onlyFiles.map((f) => {
+		const candidates = [f, targetPath + f].filter((c) => fs.existsSync(c));
+		if (candidates.length === 0) {
+			printOutput(0, "Warning: -f " + f + " does not exist");
+			candidates.push(targetPath + f);
+		}
+		return {
+			arg: f,
+			paths: candidates.map((c) => {
+				let n = normalizePath(c);
+				if (fs.existsSync(c) && fs.statSync(c).isDirectory()) n += "/"; // Folder: match everything below
+				return n;
+			}),
+		};
+	});
+}
+let resolvedOnlyFiles = [];
+
+// Get all local files used to store the element
+function getFilesForElement(elementInfo, element) {
+	const files = [];
+	if (elementInfo.jsonFile === true)
+		files.push(targetPath + element.filename + ".json");
+	if (elementInfo.scriptFiles)
+		for (const scriptFile of elementInfo.scriptFiles)
+			files.push(
+				targetPath + element.filename + "." + scriptFile + ".crmscript",
+			);
+	return files;
+}
+
+// If -f is used, return true if element is stored in one of the given files (or below one of the given folders)
+function elementIsInOnlyFiles(elementInfo, element) {
+	if (onlyFiles.length === 0) return true;
+	const files = getFilesForElement(elementInfo, element).map(normalizePath);
+	let result = false;
+	for (const onlyFile of resolvedOnlyFiles)
+		for (const p of onlyFile.paths)
+			for (const file of files)
+				if (p.endsWith("/") ? file.startsWith(p) : file === p) {
+					onlyFilesMatched[onlyFile.arg] = true;
+					result = true;
+				}
+	return result;
 }
 
 function getAttributesExceptScriptfiles(elementInfo, element) {
@@ -473,14 +538,7 @@ async function getElement(elementInfo, element) {
 
 // Get the newest mtime for any of the files used to store the element
 function getMtimeForElement(elementInfo, element) {
-	const files = [];
-	if (elementInfo.jsonFile === true)
-		files.push(targetPath + element.filename + ".json");
-	if (elementInfo.scriptFiles)
-		for (const scriptFile of elementInfo.scriptFiles)
-			files.push(
-				targetPath + element.filename + "." + scriptFile + ".crmscript",
-			);
+	const files = getFilesForElement(elementInfo, element);
 
 	let mtime = null;
 	for (file of files) {
@@ -496,6 +554,7 @@ function getMtimeForElement(elementInfo, element) {
 }
 
 async function checkElement(elementInfo, element, method) {
+	if (!elementIsInOnlyFiles(elementInfo, element)) return;
 	const mtime = getMtimeForElement(elementInfo, element);
 
 	if (method === "status") {
@@ -510,8 +569,10 @@ async function checkElement(elementInfo, element, method) {
 		printFileStatus(element.filename, " <== forced get");
 		await getElement(elementInfo, element);
 	} else if (method === "put") {
+		if (!elementInfo.updateFields || !elementInfo.scriptFiles) return; // Table does not support put
 		printFileStatus(element.filename, " ==> forced put");
-		await putElement(elementInfo, element, mtime);
+		if (await putElement(elementInfo, element, mtime))
+			syncSentFiles.push(element.filename);
 	} else if (method === "sync") {
 		if (element.mtime === null)
 			printFileStatus(
@@ -524,8 +585,8 @@ async function checkElement(elementInfo, element, method) {
 			syncReceivedFiles.push(element.filename);
 		} else if (element.mtime < mtime) {
 			printFileStatus(element.filename, " ==> database");
-			await putElement(elementInfo, element, mtime);
-			syncSentFiles.push(element.filename);
+			if (await putElement(elementInfo, element, mtime))
+				syncSentFiles.push(element.filename);
 		} else printFileStatus(element.filename, "     unchanged");
 	}
 }
@@ -713,6 +774,7 @@ function usage(error) {
 		0,
 		"Usage: node ExpanderSync [-e endpoint] [-m 'status'|'sync'|'get'|'put'] [-y elementType,elementType|'ejscript'][-p pathStartsWith]\r\n" +
 			"[-t targetPath] [-v verboseLevel|1] [--cleanFolder] [--noPut] [--ignoreJSONFiles]\r\n" +
+			"[-f file|folder]* (only process elements stored in these files, relative to current folder or -t)\r\n" +
 			"[--dumpTable tableName fields id-range]\r\n" +
 			"[--escapeCharaceters charsToEscape] [--escapeWith stringToReplaceWith]\r\n" +
 			"[--screenElementNameOnlyFromId id]\r\n" +
@@ -819,6 +881,8 @@ function parseArgs(myArgs) {
 			scrambleSecrets.push(myArgs[++i].replace("|", " "));
 		else if (myArgs[i] === "--includeOnly" && i + 1 < myArgs.length)
 			includeOnly.push(myArgs[++i].replace("|", " "));
+		else if (myArgs[i] === "-f" && i + 1 < myArgs.length)
+			onlyFiles.push(myArgs[++i]);
 		else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
 		else if (myArgs[i] === "--noPut") noPut = true;
 		else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
@@ -855,8 +919,38 @@ async function main() {
 
 	if (layout === "fetcher") {
 		if (method === "") method = "get";
-		if (method !== "get" || !endpoint)
-			return usage("Error: fetcher layout requires -e and only supports -m get");
+		if ((method !== "get" && method !== "put") || !endpoint)
+			return usage("Error: fetcher layout requires -e and only supports -m get or -m put");
+		if (method === "put" && onlyFiles.length === 0)
+			return usage("Error: -m put in fetcher layout requires -f");
+		if (method === "get" && onlyFiles.length > 0)
+			return usage("Error: -f is only supported with -m put in fetcher layout");
+		if (method === "put") {
+			if (noPut) printOutput(0, "noPut is true, no files will be pushed to server!");
+			try {
+				const sent = await fetcherLayout.put({
+					files: onlyFiles,
+					targetPath: targetPath,
+					endpoint: endpoint,
+					noPut: noPut,
+					client: client,
+					options: options,
+					post: (url, obj) => axios.post(url, obj),
+					formatDate: buildDateTimeString,
+					isScrambled: fileShouldBeScrambled,
+					printOutput: printOutput,
+				});
+				if (sent.length > 0)
+					printOutput(0, (noPut ? "Would send (--noPut): " : "Sent: ") + "\r\n- " + sent.join("\r\n- ") + "\r\n");
+				else printOutput(0, "Nothing sent");
+			} catch (e) {
+				printOutput(0, "Error: " + e);
+				process.exitCode = 1;
+				return;
+			}
+			printOutput(1, "Done");
+			return;
+		}
 		try {
 			await fetcherLayout.run({
 				client: client,
@@ -883,6 +977,14 @@ async function main() {
 
 	if (methods.indexOf(method) < 0 || !endpoint) return usage();
 
+	if (onlyFiles.length > 0) {
+		resolvedOnlyFiles = resolveOnlyFiles();
+		if (cleanFolders) {
+			printOutput(0, "--cleanFolders is ignored when -f is used");
+			cleanFolders = false;
+		}
+	}
+
 	if (noPut)
 		printOutput(0, "noPut is true, no files will be pushed to server!");
 
@@ -903,6 +1005,28 @@ async function main() {
 			true,
 		);
 	}
+
+	if (method === "put") {
+		if (syncSentFiles.length > 0)
+			printOutput(
+				0,
+				(noPut ? "Would send (--noPut): " : "Sent: ") +
+					"\r\n- " +
+					syncSentFiles.join("\r\n- ") +
+					"\r\n",
+			);
+		else printOutput(0, "Nothing sent");
+	}
+
+	for (const f of onlyFiles)
+		if (!onlyFilesMatched[f])
+			printOutput(
+				0,
+				"Warning: -f " + f + " did not match anything in the database (check -y, -p and -t. New scripts must be created in SuperOffice first)" +
+					([f, targetPath + f].some((c) => fs.existsSync(c) && !fs.statSync(c).isDirectory() && !fetcherLayout.locateFile(c).error)
+						? "\r\nThis looks like a CRMScript Fetcher file. Use --layout fetcher"
+						: ""),
+			);
 
 	if (method === "sync" && verboseLevel < 2) {
 		if (syncSentFiles.length > 0)
