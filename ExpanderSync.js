@@ -118,6 +118,7 @@ let escapeWith = "_";
 let elementTypesToProcess = "ejscript";
 let elementTypesSpecified = false; // Whether -y was given. Used by fetcher layout, where default is all
 let layout = "expander"; // "expander" or "fetcher" (same folder/file structure as CRMScript Fetcher)
+let includeBlockedVerbs = false; // Fetcher layout: write blocked_verbs (as names) to script .json files
 let screenElementNameOnlyFromId = -1; // Using DB id as a part of the filename for screen_definition_element was a stupid ID. This variable allows for using name only (if set) for all new elements we create
 let screenElementNameOnlyIds = []; // Better system, array of ids
 
@@ -782,7 +783,8 @@ function usage(error) {
 			"[--screenElementNameOnlyIds id-range]\r\n" +
 			"[--ignore searchString]\r\n" +
 			"[--layout 'expander'|'fetcher'] (fetcher: -e must point to the crmscript_fetcher script, only -m get is supported,\r\n" +
-			"  -y scripts,triggers,screens,screen_choosers,scheduled_tasks,extra_tables, default all)",
+			"  -y scripts,triggers,screens,screen_choosers,scheduled_tasks,extra_tables, default all)\r\n" +
+			"[--include-blocked-verbs] (fetcher: write blocked_verbs to script .json files, e.g. \"BlockPOST,BlockPUT\")",
 		"[--scrambleSecrets searchStringFilename]",
 	);
 }
@@ -884,6 +886,7 @@ function parseArgs(myArgs) {
 		else if (myArgs[i] === "-f" && i + 1 < myArgs.length)
 			onlyFiles.push(myArgs[++i]);
 		else if (myArgs[i] === "--cleanFolders") cleanFolders = true;
+		else if (myArgs[i] === "--include-blocked-verbs") includeBlockedVerbs = true;
 		else if (myArgs[i] === "--noPut") noPut = true;
 		else if (myArgs[i] === "--ignoreJSONFiles") ignoreJSONFiles = true;
 		else if (myArgs[i] === "--ejscriptCorrectFolder")
@@ -959,6 +962,7 @@ async function main() {
 				targetPath: targetPath,
 				groupList: elementTypesSpecified ? elementTypesToProcess : null,
 				cleanFolders: cleanFolders,
+				includeBlockedVerbs: includeBlockedVerbs,
 				verboseLevel: verboseLevel,
 				knownFiles: knownFiles,
 				writeFile: (filename, data) => createFolderAndFile(filename, data, null, true),

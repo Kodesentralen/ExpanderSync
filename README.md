@@ -36,4 +36,5 @@ With `--layout fetcher`, ExpanderSync creates the same folder/file structure as 
 
 - `-y` selects what to fetch: `scripts,triggers,screens,screen_choosers,scheduled_tasks,extra_tables` (default all). The ExpanderSync names `ejscript`, `screen_definition` and `screen_chooser` are accepted as aliases.
 - `--cleanFolders` deletes files and folders inside the fetched folders that no longer exist in SuperOffice (CRMScript Fetcher always does this). Files in the root folder are never touched.
+- `--include-blocked-verbs` writes the `blocked_verbs` field (if the fetcher script returns it) to each script's `.json` file as a comma separated list of names, e.g. `0` becomes `BlockNone`, `6` becomes `BlockPOST,BlockPUT` and `-1` becomes `BlockAll`. Without it, the field is left out.
 - Files are only rewritten when their content has changed. `--ignore`, `--includeOnly` and `--scrambleSecrets` work as usual.

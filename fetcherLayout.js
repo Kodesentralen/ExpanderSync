@@ -106,6 +106,39 @@ function pyStr(value) {
 	return value === undefined || value === null ? "None" : String(value);
 }
 
+// Bit flags in ejscript.blocked_verbs
+const blockedVerbFlags = [
+	["BlockGET", 1],
+	["BlockPOST", 2],
+	["BlockPUT", 4],
+	["BlockDELETE", 8],
+	["BlockPATCH", 16],
+	["BlockOPTIONS", 32],
+	["BlockHEAD", 64],
+	["BlockTRACE", 128],
+	["BlockCONNECT", 256],
+	["BlockOTHER", 512],
+];
+
+// Convert blocked_verbs value to comma separated names, e.g. 6 -> "BlockPOST,BlockPUT". Unknown bits are kept as numbers
+function blockedVerbsToString(value) {
+	if (value === undefined || value === null || value === "") return value;
+	const n = Number(value);
+	if (!Number.isInteger(n)) return value;
+	if (n === 0) return "BlockNone";
+	if (n === -1) return "BlockAll";
+	if (n < 0) return value;
+	const names = [];
+	let rest = n;
+	for (const [name, flag] of blockedVerbFlags)
+		if (rest & flag) {
+			names.push(name);
+			rest &= ~flag;
+		}
+	if (rest) names.push(String(rest));
+	return names.join(",");
+}
+
 function omit(obj, keys) {
 	const result = {};
 	for (const key in obj) if (keys.indexOf(key) < 0) result[key] = obj[key];
@@ -116,7 +149,7 @@ function omit(obj, keys) {
   Build list of folders and files from fetcher JSON. Returns { folders: [relPath], files: [{ path: relPath, content }] }
   in the same order as CRMScript Fetcher creates them (matters if two entries end up with the same filename).
 */
-function buildLayout(data, groupsToFetch) {
+function buildLayout(data, groupsToFetch, includeBlockedVerbs) {
 	const folders = [];
 	const files = [];
 	const addFolder = (p) => folders.push(p);
@@ -144,8 +177,15 @@ function buildLayout(data, groupsToFetch) {
 		const group = data.group_scripts;
 		addFolder(dir);
 		walkHierarchy(dir, group.script_folders, -1, (folderPath, folderId) => {
-			for (const script of group.scripts.filter((s) => s.hierarchy_id === folderId))
-				addScriptAndJson(folderPath, safeName(script.description), script);
+			for (const script of group.scripts.filter((s) => s.hierarchy_id === folderId)) {
+				// blocked_verbs is only written with --include-blocked-verbs, as names instead of the bit flag value
+				let entry = script;
+				if ("blocked_verbs" in script)
+					entry = includeBlockedVerbs
+						? Object.assign({}, script, { blocked_verbs: blockedVerbsToString(script.blocked_verbs) })
+						: omit(script, ["blocked_verbs"]);
+				addScriptAndJson(folderPath, safeName(script.description), entry);
+			}
 		});
 	}
 
@@ -321,7 +361,7 @@ function cleanFolder(root, knownFiles, knownFolders, isIgnored, printOutput) {
 
 /*
   Fetch from the crmscript_fetcher endpoint and write files. ctx contains:
-  client, options (NTLM options), endpoint, targetPath, groupList (from -y, or null for all), cleanFolders,
+  client, options (NTLM options), endpoint, targetPath, groupList (from -y, or null for all), cleanFolders, includeBlockedVerbs,
   writeFile(filename, data) and isIgnored(filename) from ExpanderSync.js, knownFiles and printOutput
 */
 async function run(ctx) {
@@ -351,7 +391,7 @@ async function run(ctx) {
 	if (scriptVersion !== SUPPORTED_SCRIPT_VERSION)
 		throw "Unsupported crmscript_fetcher script version: " + scriptVersion + ", expected " + SUPPORTED_SCRIPT_VERSION;
 
-	const layout = buildLayout(data, groupsToFetch);
+	const layout = buildLayout(data, groupsToFetch, ctx.includeBlockedVerbs);
 
 	const knownFolders = {};
 	for (const folder of layout.folders) {
